@@ -32,21 +32,27 @@ def _collect_paths(
     return paths
 
 
-def write_tree_to_txt(
-    source_dir: Path, output_path: Path, max_depth: int
-) -> None:
+def get_tree_paths(source_dir: Path, max_depth: int) -> list[str]:
     """
-    Zapisuje drzewo katalogów i plików do pliku TXT (płaska lista ścieżek).
+    Zbiera listę ścieżek drzewa (dry run lub przed zapisem).
 
     @param source_dir Ścieżka do katalogu źródłowego
-    @param output_path Ścieżka do pliku wynikowego .txt
-    @param max_depth Poziom zagnieżdżenia (0=tylko root, 1=+1 warstwa, 2=+2 warstwy, …)
+    @param max_depth Poziom zagnieżdżenia (0=tylko root, 1=+1 warstwa, …)
+    @returns Lista ścieżek względnych z kropką na początku
     """
     source_dir = source_dir.resolve()
     if not source_dir.is_dir():
         raise NotADirectoryError(f"Nie jest katalogiem: {source_dir}")
+    return ["."] + _collect_paths(source_dir, source_dir, 0, max_depth)
 
-    paths = ["."] + _collect_paths(source_dir, source_dir, 0, max_depth)
+
+def write_paths_to_file(paths: list[str], output_path: Path) -> None:
+    """
+    Zapisuje listę ścieżek do pliku TXT.
+
+    @param paths Lista ścieżek (jedna na linię)
+    @param output_path Ścieżka do pliku wynikowego
+    """
     output_path = output_path.resolve()
     output_path.write_text("\n".join(paths), encoding="utf-8")
 
@@ -56,8 +62,25 @@ def _script_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def _ask_yes_no(prompt: str, default: bool = True) -> bool:
+    """Pyta użytkownika tak/nie. Zwraca True dla y/yes, False dla n/no."""
+    suffix = " [T/n]: " if default else " [t/N]: "
+    raw = input(prompt + suffix).strip().lower()
+    if not raw:
+        return default
+    return raw in ("t", "y", "tak", "yes")
+
+
+def _resolve_output_path(output_name: str, source_dir: Path) -> Path:
+    """Ścieżka pełna, jeśli podana; w przeciwnym razie katalog źródłowy + nazwa."""
+    p = Path(output_name)
+    if p.is_absolute() or "/" in output_name or "\\" in output_name:
+        return p.resolve()
+    return source_dir / output_name
+
+
 def _run_interactive_menu() -> None:
-    """Prowadzi użytkownika przez pytania i uruchamia zapis drzewa."""
+    """Prowadzi użytkownika przez pytania, dry run i ewentualny zapis drzewa."""
     print("--- Plik wyjściowy ---")
     output_name = input("Nazwa pliku wyjściowego [tree.txt]: ").strip() or "tree.txt"
     if not output_name.endswith(".txt"):
@@ -79,9 +102,28 @@ def _run_interactive_menu() -> None:
     if max_depth < 0:
         max_depth = 0
 
-    output_path = source_dir / output_name
-    write_tree_to_txt(source_dir, output_path, max_depth)
-    print(f"\nZapisano: {output_path}")
+    print("\n--- Dry run (skanowanie) ---")
+    paths = get_tree_paths(source_dir, max_depth)
+    count = len(paths)
+
+    if count > 1000:
+        print(
+            f"Znaleziono {count} obiektów (folderów i plików). "
+            "Przetworzenie może potrwać."
+        )
+        if not _ask_yes_no("Kontynuować?", default=True):
+            print("Przerwano.")
+            return
+    else:
+        print(f"Dry run zakończony pomyślnie. Znaleziono {count} obiektów. Gotowy do zapisania.")
+
+    if not _ask_yes_no("Zapisać plik?", default=True):
+        print("Nie zapisano.")
+        return
+
+    output_path = _resolve_output_path(output_name, source_dir)
+    write_paths_to_file(paths, output_path)
+    print(f"Zapisano: {output_path}")
 
 
 def main() -> None:
